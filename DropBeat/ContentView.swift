@@ -1,3 +1,9 @@
+// ContentView.swift
+// DropBeat
+//
+// Created by Sudhanva Acharya on 08/12/24.
+//
+
 import SwiftUI
 
 struct ContentView: View {
@@ -41,4 +47,8 @@ struct ContentView: View {
         }
         .frame(width: 300, height: 400)
     }
+}
+
+#Preview {
+    ContentView()
 }
