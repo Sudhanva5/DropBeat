@@ -1,1 +1,53 @@
-aW1wb3J0IFN3aWZ0VUkKaW1wb3J0IEFwcEtpdAoKQG1haW4Kc3RydWN0IERyb3BCZWF0QXBwOiBBcHAgewogICAgQE5TQXBwbGljYXRpb25EZWxlZ2F0ZUFkYXB0b3IoQXBwRGVsZWdhdGUuc2VsZikgdmFyIGFwcERlbGVnYXRlCiAgICAKICAgIHZhciBib2R5OiBzb21lIFNjZW5lIHsKICAgICAgICBTZXR0aW5ncyB7CiAgICAgICAgICAgIEVtcHR5VmlldygpCiAgICAgICAgfQogICAgfQp9CgpjbGFzcyBBcHBEZWxlZ2F0ZTogTlNPYmplY3QsIE5TQXBwbGljYXRpb25EZWxlZ2F0ZSB7CiAgICBwcml2YXRlIHZhciBzdGF0dXNJdGVtOiBOU1N0YXR1c0l0ZW0hCiAgICBwcml2YXRlIHZhciBwb3BvdmVyOiBOU1BvcG92ZXIhCiAgICAKICAgIGZ1bmMgYXBwbGljYXRpb25EaWRGaW5pc2hMYXVuY2hpbmcoXyBub3RpZmljYXRpb246IE5vdGlmaWNhdGlvbikgewogICAgICAgIE5TQXBwLnNldEFjdGl2YXRpb25Qb2xpY3koLmFjY2Vzc29yeSkKICAgICAgICAKICAgICAgICBzZXR1cE1lbnVCYXIoKQogICAgICAgIHNldHVwUG9wb3ZlcigpCiAgICB9CiAgICAKICAgIHByaXZhdGUgZnVuYyBzZXR1cE1lbnVCYXIoKSB7CiAgICAgICAgc3RhdHVzSXRlbSA9IE5TU3RhdHVzQmFyLnN5c3RlbS5zdGF0dXNJdGVtKHdpdGhMZW5ndGg6IE5TU3RhdHVzSXRlbS52YXJpYWJsZUxlbmd0aCkKICAgICAgICAKICAgICAgICBpZiBsZXQgYnV0dG9uID0gc3RhdHVzSXRlbS5idXR0b24gewogICAgICAgICAgICBidXR0b24uaW1hZ2UgPSBOU0ltYWdlKHN5c3RlbVN5bWJvbE5hbWU6ICJtdXNpYy5ub3RlIiwgYWNjZXNzaWJpbGl0eURlc2NyaXB0aW9uOiAiRHJvcEJlYXQiKQogICAgICAgICAgICBidXR0b24uYWN0aW9uID0gI3NlbGVjdG9yKHRvZ2dsZVBvcG92ZXIpCiAgICAgICAgICAgIGJ1dHRvbi50YXJnZXQgPSBzZWxmCiAgICAgICAgfQogICAgfQogICAgCiAgICBwcml2YXRlIGZ1bmMgc2V0dXBQb3BvdmVyKCkgewogICAgICAgIHBvcG92ZXIgPSBOU1BvcG92ZXIoKQogICAgICAgIHBvcG92ZXIuY29udGVudFNpemUgPSBOU1NpemUod2lkdGg6IDMwMCwgaGVpZ2h0OiA0MDApCiAgICAgICAgcG9wb3Zlci5iZWhhdmlvciA9IC50cmFuc2llbnQKICAgICAgICBwb3BvdmVyLmNvbnRlbnRWaWV3Q29udHJvbGxlciA9IE5TSG9zdGluZ0NvbnRyb2xsZXIocm9vdFZpZXc6IENvbnRlbnRWaWV3KCkpCiAgICB9CiAgICAKICAgIEBvYmogcHJpdmF0ZSBmdW5jIHRvZ2dsZVBvcG92ZXIoKSB7CiAgICAgICAgaWYgbGV0IGJ1dHRvbiA9IHN0YXR1c0l0ZW0uYnV0dG9uIHsKICAgICAgICAgICAgaWYgcG9wb3Zlci5pc1Nob3duIHsKICAgICAgICAgICAgICAgIHBvcG92ZXIucGVyZm9ybUNsb3NlKG5pbCkKICAgICAgICAgICAgfSBlbHNlIHsKICAgICAgICAgICAgICAgIE5TQXBwLmFjdGl2YXRlKGlnbm9yaW5nT3RoZXJBcHBzOiB0cnVlKQogICAgICAgICAgICAgICAgcG9wb3Zlci5zaG93KHJlbGF0aXZlVG86IGJ1dHRvbi5ib3VuZHMsIG9mOiBidXR0b24sIHByZWZlcnJlZEVkZ2U6IC5taW5ZKQogICAgICAgICAgICB9CiAgICAgICAgfQogICAgfQp9
+import SwiftUI
+import AppKit
+
+@main
+struct DropBeatApp: App {
+    @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
+    
+    var body: some Scene {
+        Settings {
+            EmptyView()
+        }
+    }
+}
+
+class AppDelegate: NSObject, NSApplicationDelegate {
+    private var statusItem: NSStatusItem!
+    private var popover: NSPopover!
+    
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        NSApp.setActivationPolicy(.accessory)
+        
+        setupMenuBar()
+        setupPopover()
+    }
+    
+    private func setupMenuBar() {
+        statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+        
+        if let button = statusItem.button {
+            button.image = NSImage(systemSymbolName: "music.note", accessibilityDescription: "DropBeat")
+            button.action = #selector(togglePopover)
+            button.target = self
+        }
+    }
+    
+    private func setupPopover() {
+        popover = NSPopover()
+        popover.contentSize = NSSize(width: 300, height: 400)
+        popover.behavior = .transient
+        popover.contentViewController = NSHostingController(rootView: ContentView())
+    }
+    
+    @objc private func togglePopover() {
+        if let button = statusItem.button {
+            if popover.isShown {
+                popover.performClose(nil)
+            } else {
+                NSApp.activate(ignoringOtherApps: true)
+                popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
+            }
+        }
+    }
+}
