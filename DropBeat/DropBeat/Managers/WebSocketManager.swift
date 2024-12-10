@@ -36,6 +36,7 @@ class WebSocketManager: ObservableObject {
             print("🎵 [DropBeat] Setting up WebSocket server on port \(port)...")
             let parameters = NWParameters.tcp
             parameters.allowLocalEndpointReuse = true
+            parameters.allowLocalEndpointReuse = true
             
             let nwPort = NWEndpoint.Port(rawValue: port)!
             server = try NWListener(using: parameters, on: nwPort)
@@ -53,7 +54,10 @@ class WebSocketManager: ObservableObject {
                     self?.handleServerFailure()
                 case .cancelled:
                     print("🔴 [DropBeat] Server cancelled")
-                    self?.handleServerFailure()
+                    DispatchQueue.main.async {
+                        self?.isConnected = false
+                        self?.handleConnectionChange()
+                    }
                 default:
                     print("ℹ️ [DropBeat] Server state: \(state)")
                 }
@@ -75,8 +79,16 @@ class WebSocketManager: ObservableObject {
     private func startPingInterval() {
         queue.asyncAfter(deadline: .now() + PING_INTERVAL) { [weak self] in
             guard let self = self else { return }
-            self.checkConnection()
-            self.startPingInterval()
+            
+            // Only check connection if we have an active connection
+            if self.activeConnection != nil {
+                self.checkConnection()
+            }
+            
+            // Continue ping interval if we're still running
+            if self.server != nil {
+                self.startPingInterval()
+            }
         }
     }
     
@@ -84,26 +96,42 @@ class WebSocketManager: ObservableObject {
         let timeSinceLastPong = Date().timeIntervalSince(lastPongReceived)
         if timeSinceLastPong > PING_INTERVAL * 2 {
             print("⚠️ [DropBeat] Connection seems dead, last pong was \(timeSinceLastPong) seconds ago")
-            handleServerFailure()
+            handleConnectionFailure(activeConnection!)
         }
     }
     
     private func handleServerFailure() {
+        // Cancel existing connections first
+        activeConnection?.cancel()
+        activeConnection = nil
+        
+        // Cancel server and wait for it to clean up
+        if let existingServer = server {
+            existingServer.cancel()
+            server = nil
+            
+            // Wait a bit before attempting to restart
+            Thread.sleep(forTimeInterval: 0.5)
+        }
+        
+        // Update UI state
         DispatchQueue.main.async { [weak self] in
             self?.isConnected = false
             self?.handleConnectionChange()
         }
-        activeConnection?.cancel()
-        activeConnection = nil
-        server?.cancel()
-        server = nil
         
+        // Schedule restart with exponential backoff
         reconnectAttempts += 1
         let delay = min(pow(2.0, Double(reconnectAttempts)), 30.0)
         
         queue.asyncAfter(deadline: .now() + delay) { [weak self] in
-            print("🔄 [DropBeat] Attempting server restart...")
-            self?.setupServer()
+            guard let self = self else { return }
+            
+            // Only attempt restart if we're not already connected
+            if self.server == nil && self.activeConnection == nil {
+                print("🔄 [DropBeat] Attempting server restart...")
+                self.setupServer()
+            }
         }
     }
     
@@ -288,36 +316,53 @@ class WebSocketManager: ObservableObject {
     }
     
     private func decodeWebSocketFrame(_ data: Data) -> Data? {
-        let headerSize = 2
-        let maskSize = 4
-        let payloadStart = headerSize + maskSize
-        
-        guard data.count >= (headerSize + maskSize) else {
+        guard data.count >= 2 else {
             print("❌ Frame too small: \(data.count) bytes")
             return nil
         }
         
-        // Get mask and payload
-        let mask = Array(data[headerSize..<payloadStart])
-        let payload = Array(data[payloadStart...])
+        let firstByte = data[0]
+        let secondByte = data[1]
+        let isMasked = (secondByte & 0x80) != 0
+        var payloadLength = UInt64(secondByte & 0x7F)
+        var currentIndex = 2
         
-        print("🔍 Frame Analysis:")
-        print("  Header:", Array(data[0..<2]).map { String(format: "%02x", $0) }.joined(separator: " "))
-        print("  Mask:", mask.map { String(format: "%02x", $0) }.joined(separator: " "))
-        
-        // Unmask data safely
-        var unmasked = [UInt8]()
-        for i in 0..<payload.count {
-            let maskIndex = i % mask.count
-            let unmaskedByte = payload[i] ^ mask[maskIndex]
-            unmasked.append(unmaskedByte)
+        // Handle extended payload length
+        if payloadLength == 126 {
+            guard data.count >= 4 else { return nil }
+            payloadLength = UInt64(data[2]) << 8 | UInt64(data[3])
+            currentIndex = 4
+        } else if payloadLength == 127 {
+            guard data.count >= 10 else { return nil }
+            payloadLength = 0
+            for i in 0..<8 {
+                payloadLength = payloadLength << 8 | UInt64(data[2 + i])
+            }
+            currentIndex = 10
         }
         
-        if let str = String(data: Data(unmasked), encoding: .utf8) {
-            print("📄 Decoded text:", str)
+        // Get masking key if present
+        let maskingKey: [UInt8]?
+        if isMasked {
+            guard data.count >= currentIndex + 4 else { return nil }
+            maskingKey = Array(data[currentIndex..<currentIndex + 4])
+            currentIndex += 4
+        } else {
+            maskingKey = nil
         }
         
-        return Data(unmasked)
+        // Get payload
+        guard data.count >= currentIndex + Int(payloadLength) else { return nil }
+        var payload = Array(data[currentIndex..<currentIndex + Int(payloadLength)])
+        
+        // Unmask if necessary
+        if let mask = maskingKey {
+            for i in 0..<payload.count {
+                payload[i] ^= mask[i % 4]
+            }
+        }
+        
+        return Data(payload)
     }
     
     private func createWebSocketFrame(withPayload payload: Data) -> Data {
@@ -391,8 +436,49 @@ class WebSocketManager: ObservableObject {
         sendCommand("toggleLike")
     }
     
-    private func sendCommand(_ command: String) {
-        let message = ["type": "COMMAND", "command": command]
+    func openYouTubeMusic() {
+        print("🎵 [DropBeat] Opening YouTube Music")
+        sendCommand("openYouTubeMusic")
+    }
+    
+    func seek(to position: Double) {
+        print("⏩ [DropBeat] Seeking to position:", position)
+        let roundedPosition = round(position)
+        let data: [String: Any] = ["position": roundedPosition]
+        print("📤 [DropBeat] Sending seek command with data:", data)
+        
+        // Send the command
+        sendCommand("seek", data: data)
+        
+        // Update local track info immediately for smoother UI
+        if let track = currentTrack {
+            let updatedTrack = Track(
+                id: track.id,
+                title: track.title,
+                artist: track.artist,
+                albumArt: track.albumArt,
+                isLiked: track.isLiked,
+                duration: track.duration,
+                isPlaying: track.isPlaying,
+                currentTime: roundedPosition
+            )
+            DispatchQueue.main.async { [weak self] in
+                self?.currentTrack = updatedTrack
+            }
+        }
+    }
+    
+    private func sendCommand(_ command: String, data: [String: Any] = [:]) {
+        var message: [String: Any] = [
+            "type": "COMMAND",
+            "command": command
+        ]
+        
+        if !data.isEmpty {
+            message["data"] = data
+        }
+        
+        print("📤 [DropBeat] Sending message:", message)
         sendResponse(message)
     }
 }

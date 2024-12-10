@@ -7,6 +7,8 @@ struct Track: Identifiable, Codable, Equatable {
     let albumArt: String?
     var isLiked: Bool
     let duration: Double
+    let isPlaying: Bool
+    let currentTime: Double
     
     static let empty = Track(
         id: "empty",
@@ -14,11 +16,24 @@ struct Track: Identifiable, Codable, Equatable {
         artist: "No Artist",
         albumArt: nil,
         isLiked: false,
-        duration: 0
+        duration: 0,
+        isPlaying: false,
+        currentTime: 0
     )
     
+    init(id: String = UUID().uuidString, title: String, artist: String, albumArt: String?, isLiked: Bool, duration: Double, isPlaying: Bool, currentTime: Double) {
+        self.id = id
+        self.title = title
+        self.artist = artist
+        self.albumArt = albumArt
+        self.isLiked = isLiked
+        self.duration = duration
+        self.isPlaying = isPlaying
+        self.currentTime = currentTime
+    }
+    
     enum CodingKeys: String, CodingKey {
-        case id, title, artist, albumArt, isLiked, duration
+        case id, title, artist, albumArt, isLiked, duration, isPlaying, currentTime
     }
 }
 
@@ -30,7 +45,9 @@ extension Track {
         return String(format: "%d:%02d", minutes, seconds)
     }
     
-    var isPaused: Bool {
-        return duration > 0 && title != "No Track Playing"
+    var formattedCurrentTime: String {
+        let minutes = Int(currentTime / 60)
+        let seconds = Int(currentTime.truncatingRemainder(dividingBy: 60))
+        return String(format: "%d:%02d", minutes, seconds)
     }
 } 

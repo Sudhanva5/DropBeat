@@ -158,12 +158,67 @@ class WebSocketManager {
     handleMessage(event) {
         try {
             const message = JSON.parse(event.data);
+            console.log('📥 [DropBeat] WebSocket message received:', message);
+            
             if (message.type === 'PONG') {
                 this.lastPongReceived = Date.now();
                 console.log('✅ [DropBeat] Pong received');
+            } else if (message.type === 'COMMAND') {
+                console.log('🎮 [DropBeat] Command received:', message.command);
+                this.forwardCommandToYouTubeMusic(message);
             }
         } catch (error) {
             console.error('❌ [DropBeat] Failed to parse message:', error);
+        }
+    }
+
+    async forwardCommandToYouTubeMusic(message) {
+        try {
+            // Find all YouTube Music tabs
+            const tabs = await chrome.tabs.query({ url: '*://music.youtube.com/*' });
+            
+            if (tabs.length === 0) {
+                console.log('⚠️ [DropBeat] No YouTube Music tab found');
+                // If it's a request to open YouTube Music or no tab exists, create one
+                if (message.command === 'openYouTubeMusic' || ['play', 'pause', 'next', 'previous'].includes(message.command)) {
+                    console.log('🎵 [DropBeat] Opening new YouTube Music tab');
+                    const newTab = await chrome.tabs.create({ url: 'https://music.youtube.com', active: true });
+                    // Wait for the tab to load and content script to be ready
+                    await new Promise(resolve => setTimeout(resolve, 3000));
+                    return;
+                }
+                return;
+            }
+
+            // Try to find an active YouTube Music tab first
+            let targetTab = tabs.find(tab => tab.active) || tabs[0];
+            
+            // If it's an openYouTubeMusic command, just focus the tab
+            if (message.command === 'openYouTubeMusic') {
+                await chrome.tabs.update(targetTab.id, { active: true });
+                await chrome.windows.update(targetTab.windowId, { focused: true });
+                return;
+            }
+            
+            // Ensure the tab is ready
+            try {
+                // Try to ping the content script
+                await chrome.tabs.sendMessage(targetTab.id, { type: 'PING' });
+                console.log('✅ [DropBeat] Content script is ready');
+            } catch (error) {
+                console.log('⚠️ [DropBeat] Content script not ready, reinjecting...');
+                // If the content script isn't ready, reload the tab
+                await chrome.tabs.reload(targetTab.id);
+                // Wait for the tab to complete loading
+                await new Promise(resolve => setTimeout(resolve, 2000));
+            }
+
+            // Forward the command
+            console.log('📤 [DropBeat] Forwarding command to tab:', targetTab.id);
+            await chrome.tabs.sendMessage(targetTab.id, message);
+            console.log('✅ [DropBeat] Command forwarded successfully');
+        } catch (error) {
+            console.error('❌ [DropBeat] Error forwarding command:', error);
         }
     }
 
@@ -236,12 +291,14 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
             if (wsManager.ws?.readyState === WebSocket.OPEN) {
                 try {
                     wsManager.ws.send(JSON.stringify(message));
+                    console.log('✅ [DropBeat] Track info forwarded to WebSocket');
                     sendResponse({ sent: true });
                 } catch (error) {
                     console.error('❌ [DropBeat] Error sending track info:', error);
                     sendResponse({ sent: false, error: error.message });
                 }
             } else {
+                console.log('⚠️ [DropBeat] WebSocket not connected, track info not sent');
                 sendResponse({ sent: false, error: 'Not connected' });
             }
             break;
@@ -249,7 +306,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
             console.log('⚠️ [DropBeat] Unknown message type:', message.type);
             sendResponse({ error: 'Unknown message type' });
     }
-    return true;
+    
+    return true; // Keep the message channel open for async response
 });
 
 // Start connection

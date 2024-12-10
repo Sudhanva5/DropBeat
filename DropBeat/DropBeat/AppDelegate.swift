@@ -1,10 +1,17 @@
+import Foundation
 import SwiftUI
 import AppKit
+import Network
 
 class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusItem: NSStatusItem!
-    private var wsManager = WebSocketManager.shared
+    private var wsManager: WebSocketManager
     private var popover: NSPopover!
+    
+    override init() {
+        self.wsManager = WebSocketManager.shared
+        super.init()
+    }
     
     func applicationDidFinishLaunching(_ notification: Notification) {
         // Hide dock icon
@@ -18,6 +25,14 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             self,
             selector: #selector(handleConnectionChange),
             name: NSNotification.Name("WebSocketConnectionChanged"),
+            object: nil
+        )
+        
+        // Observe track changes
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleTrackChange),
+            name: NSNotification.Name("TrackChanged"),
             object: nil
         )
     }
@@ -41,21 +56,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         popover.contentViewController = NSHostingController(rootView: ContentView())
     }
     
-    @objc private func togglePopover() {
-        if let button = statusItem.button {
-            if popover.isShown {
-                popover.performClose(nil)
-            } else {
-                NSApp.activate(ignoringOtherApps: true)
-                popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
-            }
-        }
-    }
-    
-    @objc func handleConnectionChange() {
-        updateMenu()
-    }
-    
     private func updateMenu() {
         let menu = NSMenu()
         
@@ -76,7 +76,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         
         // Playback Controls
         let playPauseItem = NSMenuItem(
-            title: "Play/Pause",
+            title: wsManager.currentTrack?.isPlaying == true ? "Pause" : "Play",
             action: #selector(togglePlayPause),
             keyEquivalent: "p"
         )
@@ -95,16 +95,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             keyEquivalent: "]"
         )
         menu.addItem(nextItem)
-        
-        menu.addItem(NSMenuItem.separator())
-        
-        // Like Button
-        let likeItem = NSMenuItem(
-            title: "Like",
-            action: #selector(toggleLike),
-            keyEquivalent: "l"
-        )
-        menu.addItem(likeItem)
         
         menu.addItem(NSMenuItem.separator())
         
@@ -127,12 +117,36 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         statusItem.menu = menu
     }
     
+    @objc private func togglePopover() {
+        if let button = statusItem.button {
+            if popover.isShown {
+                popover.performClose(nil)
+            } else {
+                NSApp.activate(ignoringOtherApps: true)
+                popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
+            }
+        }
+    }
+    
+    @objc func handleConnectionChange() {
+        if wsManager.isConnected {
+            statusItem.button?.image = NSImage(systemSymbolName: "music.note", accessibilityDescription: "DropBeat")
+        } else {
+            statusItem.button?.image = NSImage(systemSymbolName: "music.note.slash", accessibilityDescription: "DropBeat Disconnected")
+        }
+        updateMenu()
+    }
+    
+    @objc func handleTrackChange() {
+        updateMenu()
+    }
+    
     @objc func togglePlayPause() {
         if let track = wsManager.currentTrack {
-            if track.isPaused {
-                wsManager.play()
-            } else {
+            if track.isPlaying {
                 wsManager.pause()
+            } else {
+                wsManager.play()
             }
         }
     }
@@ -143,10 +157,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     
     @objc func nextTrack() {
         wsManager.next()
-    }
-    
-    @objc func toggleLike() {
-        wsManager.toggleLike()
     }
     
     @objc func quitApp() {
