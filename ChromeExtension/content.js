@@ -82,6 +82,73 @@ function handleCommand(command, message) {
             '[data-testid="like-button-renderer"]'
         ]
     };
+
+    // Helper function to wait for track change
+    const waitForTrackChange = (currentSignature, timeout = 3000) => {
+        return new Promise((resolve) => {
+            const startTime = Date.now();
+            const checkInterval = setInterval(() => {
+                const titleElement = document.querySelector('.ytmusic-player-bar .title.style-scope.ytmusic-player-bar');
+                const artistElement = document.querySelector('.ytmusic-player-bar .byline.style-scope.ytmusic-player-bar');
+                const title = titleElement?.textContent?.trim() || '';
+                const artist = artistElement?.textContent?.trim() || '';
+                const newSignature = `${title}-${artist}`;
+
+                if (newSignature !== currentSignature && title !== '') {
+                    clearInterval(checkInterval);
+                    // Add a small delay to let YouTube Music stabilize
+                    setTimeout(() => resolve(true), 150);
+                } else if (Date.now() - startTime > timeout) {
+                    clearInterval(checkInterval);
+                    resolve(false);
+                }
+            }, 100); // Reduced polling frequency
+        });
+    };
+
+    // Helper function to verify track hasn't changed
+    const verifyTrackUnchanged = (originalSignature) => {
+        const titleElement = document.querySelector('.ytmusic-player-bar .title.style-scope.ytmusic-player-bar');
+        const artistElement = document.querySelector('.ytmusic-player-bar .byline.style-scope.ytmusic-player-bar');
+        const currentSignature = `${titleElement?.textContent?.trim() || ''}-${artistElement?.textContent?.trim() || ''}`;
+        return currentSignature === originalSignature;
+    };
+
+    // Helper function to wait for play state change with track verification
+    const waitForPlayStateChange = (wasPlaying, originalSignature, timeout = 2000) => {
+        return new Promise((resolve) => {
+            const startTime = Date.now();
+            let stabilityCounter = 0;
+            const checkInterval = setInterval(() => {
+                const video = document.querySelector('video');
+                const isNowPlaying = !video?.paused;
+                
+                // First verify the track hasn't changed
+                if (!verifyTrackUnchanged(originalSignature)) {
+                    clearInterval(checkInterval);
+                    resolve({ changed: false, reason: 'track_changed' });
+                    return;
+                }
+                
+                if (isNowPlaying !== wasPlaying) {
+                    stabilityCounter++;
+                    // Wait for the state to be stable for at least 2 checks
+                    if (stabilityCounter >= 2) {
+                        clearInterval(checkInterval);
+                        // Add a small delay to let YouTube Music stabilize
+                        setTimeout(() => resolve({ changed: true, isPlaying: isNowPlaying }), 100);
+                    }
+                } else {
+                    stabilityCounter = 0;
+                }
+
+                if (Date.now() - startTime > timeout) {
+                    clearInterval(checkInterval);
+                    resolve({ changed: false, reason: 'timeout' });
+                }
+            }, 100);
+        });
+    };
     
     try {
         switch (command) {
@@ -90,24 +157,82 @@ function handleCommand(command, message) {
                 const button = findElement(selectors.playPause);
                 if (button) {
                     console.log('▶️ [DropBeat] Found play/pause button, clicking...');
-                    // Store current track info before clicking
-                    const prevTrackInfo = lastTrackInfo;
-                    button.click();
-                    // Update track info with reversed playing state
-                    if (prevTrackInfo) {
-                        const updatedTrackInfo = {
-                            ...prevTrackInfo,
-                            isPlaying: !prevTrackInfo.isPlaying
-                        };
-                        lastTrackInfo = updatedTrackInfo;
-                        // Send immediate update
-                        chrome.runtime.sendMessage({
-                            type: 'TRACK_INFO',
-                            data: updatedTrackInfo
+                    const video = document.querySelector('video');
+                    const wasPlaying = !video?.paused;
+                    
+                    // Get current track signature before clicking
+                    const titleElement = document.querySelector('.ytmusic-player-bar .title.style-scope.ytmusic-player-bar');
+                    const artistElement = document.querySelector('.ytmusic-player-bar .byline.style-scope.ytmusic-player-bar');
+                    const originalSignature = `${titleElement?.textContent?.trim() || ''}-${artistElement?.textContent?.trim() || ''}`;
+                    
+                    // Add a small delay before clicking to let any previous operations complete
+                    setTimeout(() => {
+                        // Click the button
+                        button.click();
+                        
+                        // Wait for the video state to actually change
+                        if (video) {
+                            waitForPlayStateChange(wasPlaying, originalSignature).then(result => {
+                                if (result.changed) {
+                                    // Verify one final time that track hasn't changed
+                                    if (verifyTrackUnchanged(originalSignature)) {
+                                        setTimeout(() => {
+                                            const updatedTrackInfo = {
+                                                ...lastTrackInfo,
+                                                isPlaying: result.isPlaying
+                                            };
+                                            lastTrackInfo = updatedTrackInfo;
+                                            chrome.runtime.sendMessage({
+                                                type: 'TRACK_INFO',
+                                                data: updatedTrackInfo
+                                            });
+                                        }, 100);
+                                    } else {
+                                        console.warn('⚠️ [DropBeat] Track changed during play/pause operation');
+                                        updateTrackInfo(true); // Force update with new track info
+                                    }
+                                } else {
+                                    if (result.reason === 'track_changed') {
+                                        console.warn('⚠️ [DropBeat] Track changed unexpectedly during play/pause');
+                                        updateTrackInfo(true); // Force update with new track info
+                                    } else {
+                                        console.warn('⚠️ [DropBeat] Play state did not change as expected');
+                                    }
+                                }
+                            });
+                        }
+                    }, 100);
+                }
+                break;
+            }
+            case 'next':
+            case 'previous': {
+                const button = findElement(selectors[command]);
+                if (button) {
+                    console.log(`⏭️ [DropBeat] Found ${command} button, clicking...`);
+                    
+                    const titleElement = document.querySelector('.ytmusic-player-bar .title.style-scope.ytmusic-player-bar');
+                    const artistElement = document.querySelector('.ytmusic-player-bar .byline.style-scope.ytmusic-player-bar');
+                    const currentSignature = `${titleElement?.textContent?.trim() || ''}-${artistElement?.textContent?.trim() || ''}`;
+                    
+                    // Add a small delay before clicking
+                    setTimeout(() => {
+                        // Click the button
+                        button.click();
+                        
+                        // Wait for track change with increased timeout
+                        waitForTrackChange(currentSignature, 3000).then(changed => {
+                            // Add a delay before updating to let YouTube Music stabilize
+                            setTimeout(() => {
+                                if (changed) {
+                                    updateTrackInfo(true);
+                                } else {
+                                    console.warn(`⚠️ [DropBeat] Track did not change after ${command} command`);
+                                    updateTrackInfo(true);
+                                }
+                            }, 150);
                         });
-                    }
-                } else {
-                    console.warn('⚠️ [DropBeat] Play/pause button not found');
+                    }, 100);
                 }
                 break;
             }
@@ -159,33 +284,13 @@ function handleCommand(command, message) {
                 }
                 break;
             }
-            case 'next': {
-                const button = findElement(selectors.next);
-                if (button) {
-                    console.log('⏭️ [DropBeat] Found next button, clicking...');
-                    button.click();
-                } else {
-                    console.warn('⚠️ [DropBeat] Next button not found');
-                }
-                break;
-            }
-            case 'previous': {
-                const button = findElement(selectors.previous);
-                if (button) {
-                    console.log('⏮️ [DropBeat] Found previous button, clicking...');
-                    button.click();
-                } else {
-                    console.warn('⚠️ [DropBeat] Previous button not found');
-                }
-                break;
-            }
             case 'toggleLike': {
                 const button = findElement(selectors.like);
                 if (button) {
                     console.log('❤️ [DropBeat] Found like button, clicking...');
                     button.click();
                 } else {
-                    console.warn('⚠️ [DropBeat] Like button not found');
+                    console.warn('️ [DropBeat] Like button not found');
                 }
                 break;
             }
