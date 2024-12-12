@@ -248,33 +248,63 @@ function handleCommand(command, message) {
                     console.log('⏩ [DropBeat] Seeking to position:', position);
                     
                     try {
-                        // Store current track info before seeking
-                        const prevTrackInfo = lastTrackInfo;
+                        // Get track signature before seeking
+                        const titleElement = document.querySelector('.ytmusic-player-bar .title.style-scope.ytmusic-player-bar');
+                        const artistElement = document.querySelector('.ytmusic-player-bar .byline.style-scope.ytmusic-player-bar');
+                        const originalSignature = `${titleElement?.textContent?.trim() || ''}-${artistElement?.textContent?.trim() || ''}`;
+                        
+                        // Store current track info and state
+                        const wasPlaying = !video.paused;
                         
                         // Set the video position
                         video.currentTime = position;
                         
-                        // Force video to play if it was playing
-                        if (prevTrackInfo?.isPlaying) {
-                            video.play();
-                        }
-                        
-                        // Update track info immediately
-                        if (prevTrackInfo) {
+                        // Wait a short time to verify seek was successful
+                        setTimeout(() => {
+                            // Verify track hasn't changed
+                            if (!verifyTrackUnchanged(originalSignature)) {
+                                console.warn('⚠️ [DropBeat] Track changed during seek operation');
+                                updateTrackInfo(true);
+                                return;
+                            }
+                            
+                            // Verify seek position
+                            const actualPosition = video.currentTime;
+                            if (Math.abs(actualPosition - position) > 1) {
+                                console.warn('⚠️ [DropBeat] Seek position verification failed');
+                                // Update with actual position
+                                const updatedTrackInfo = {
+                                    ...lastTrackInfo,
+                                    currentTime: actualPosition
+                                };
+                                lastTrackInfo = updatedTrackInfo;
+                                chrome.runtime.sendMessage({
+                                    type: 'TRACK_INFO',
+                                    data: updatedTrackInfo
+                                });
+                                return;
+                            }
+                            
+                            // Restore play state if needed
+                            if (wasPlaying && video.paused) {
+                                video.play();
+                            }
+                            
+                            // Update track info with verified position
                             const updatedTrackInfo = {
-                                ...prevTrackInfo,
-                                currentTime: position
+                                ...lastTrackInfo,
+                                currentTime: actualPosition,
+                                isPlaying: !video.paused
                             };
                             lastTrackInfo = updatedTrackInfo;
-                            
-                            console.log('📤 [DropBeat] Sending updated track info after seek:', updatedTrackInfo);
                             chrome.runtime.sendMessage({
                                 type: 'TRACK_INFO',
                                 data: updatedTrackInfo
                             });
-                        }
+                        }, 100);
                     } catch (error) {
                         console.error('❌ [DropBeat] Error seeking:', error);
+                        updateTrackInfo(true); // Force update to sync state
                     }
                 } else {
                     console.warn('⚠️ [DropBeat] Video element not found or invalid position:', {
@@ -345,7 +375,7 @@ function getTrackInfo() {
     };
 }
 
-function updateTrackInfo(force = false) {
+function updateTrackInfo(force = false, retryCount = 0) {
     if (!isConnected) {
         console.log('⏳ [DropBeat] Not connected, skipping track update');
         return;
@@ -366,7 +396,15 @@ function updateTrackInfo(force = false) {
             if (response?.sent) {
                 console.log('✅ [DropBeat] Track info sent successfully');
             } else {
-                console.log('⚠️ [DropBeat] Failed to send track info');
+                console.warn('⚠️ [DropBeat] Failed to send track info');
+                // Retry up to 2 times with increasing delay
+                if (retryCount < 2) {
+                    const delay = Math.pow(2, retryCount) * 500; // 500ms, then 1000ms
+                    console.log(`🔄 [DropBeat] Retrying in ${delay}ms (attempt ${retryCount + 1}/2)`);
+                    setTimeout(() => {
+                        updateTrackInfo(force, retryCount + 1);
+                    }, delay);
+                }
             }
         });
     }
